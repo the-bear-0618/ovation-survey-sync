@@ -1,3 +1,4 @@
+// src/sync-service.js - Complete Ovation Survey Sync Service with Fixed Authentication
 const axios = require('axios');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -38,10 +39,19 @@ class OvationSyncService {
         `${this.ovationConfig.clientId}:${this.ovationConfig.clientSecret}`
       ).toString('base64');
       
-      const response = await axios.post(`${this.ovationConfig.baseUrl}/oauth2/access-token`, {
-        grant_type: 'client_credentials',
-        scopes: ['admin']
-      }, {
+      // Use the exact same request body format as your working Postman request
+      const requestBody = {
+        company: this.ovationConfig.companyIds[0], // Use the first company ID
+        locations: [], // Empty array as shown in your Postman
+        scopes: ["admin"],
+        grant_type: "client_credentials"
+      };
+      
+      console.log('📝 Request body:', JSON.stringify(requestBody, null, 2));
+      console.log('🔗 URL:', `${this.ovationConfig.baseUrl}/oauth2/access-token`);
+      console.log('👤 Partner ID:', this.ovationConfig.partnerName);
+      
+      const response = await axios.post(`${this.ovationConfig.baseUrl}/oauth2/access-token`, requestBody, {
         headers: {
           'Authorization': `Basic ${credentials}`,
           'X-Ovation-Id': this.ovationConfig.partnerName,
@@ -49,21 +59,32 @@ class OvationSyncService {
         }
       });
 
-      if (response.data.success) {
+      console.log('📞 Response status:', response.status);
+      console.log('📦 Response data keys:', Object.keys(response.data || {}));
+
+      if (response.data && response.data.success) {
         this.accessToken = response.data.data.access_token;
         this.apiKey = response.data.data.api_key;
         this.tokenExpiry = new Date(response.data.data.exp * 1000);
         
         console.log('✅ Authentication successful');
-        console.log(`   Token expires: ${this.tokenExpiry.toLocaleString()}`);
+        console.log(`   🔑 Token received: ${this.accessToken ? 'Yes' : 'No'}`);
+        console.log(`   🗝️ API Key received: ${this.apiKey ? 'Yes' : 'No'}`);
+        console.log(`   ⏰ Token expires: ${this.tokenExpiry.toLocaleString()}`);
         return true;
+      } else {
+        console.log('❌ Authentication response was not successful');
+        console.log('📦 Full response:', JSON.stringify(response.data, null, 2));
+        throw new Error('Authentication response was not successful');
       }
       
-      throw new Error('Authentication response was not successful');
-      
     } catch (error) {
-      console.error('❌ Authentication failed:', error.response?.data || error.message);
-      throw new Error(`Authentication failed: ${error.message}`);
+      console.error('❌ Authentication failed:');
+      console.error('   Message:', error.message);
+      console.error('   Status:', error.response?.status);
+      console.error('   Response:', JSON.stringify(error.response?.data || {}, null, 2));
+      
+      throw new Error(`Authentication failed: ${error.response?.data?.message || error.message}`);
     }
   }
 
