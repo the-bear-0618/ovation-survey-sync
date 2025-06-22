@@ -226,152 +226,295 @@ app.get('/', (req, res) => {
         </div>
 
         <script>
-            let isRefreshing = false;
+           // Fixed Dashboard JavaScript with hang prevention
+let isRefreshing = false;
+let isSyncing = false;
+let refreshInterval = null;
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('🍞 Dashboard loaded, fetching status...');
+    refreshStatus();
+    
+    // Auto-refresh every 30 seconds with proper cleanup
+    refreshInterval = setInterval(() => {
+        // Only refresh if not already refreshing or syncing
+        if (!isRefreshing && !isSyncing) {
+            refreshStatus();
+        }
+    }, 30000);
+});
+
+// Clean up interval on page unload
+window.addEventListener('beforeunload', () => {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+    }
+});
+
+// Helper function for fetch with timeout
+async function fetchWithTimeout(url, options = {}, timeout = 10000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+    } catch (error) {
+        clearTimeout(id);
+        if (error.name === 'AbortError') {
+            throw new Error('Request timeout - server not responding');
+        }
+        throw error;
+    }
+}
+
+async function refreshStatus() {
+    if (isRefreshing || isSyncing) {
+        console.log('⏳ Already busy, skipping refresh...');
+        return;
+    }
+    
+    isRefreshing = true;
+    const refreshBtn = document.getElementById('refreshBtn');
+    const statusDiv = document.getElementById('status');
+    
+    try {
+        // Update button state
+        refreshBtn.disabled = true;
+        refreshBtn.innerHTML = '<div class="loading"></div> Refreshing...';
+        
+        console.log('📊 Fetching status from /status endpoint...');
+        
+        const response = await fetchWithTimeout('/status', {}, 10000);
+        console.log('📞 Response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        console.log('📦 Received data:', data);
+        
+        if (data.success && data.data) {
+            updateDashboard(data.data);
+            console.log('✅ Dashboard updated successfully');
+        } else {
+            throw new Error(data.error || 'Invalid response format');
+        }
+        
+        // Success feedback
+        refreshBtn.innerHTML = '✅ Updated!';
+        setTimeout(() => {
+            refreshBtn.innerHTML = '🔄 Refresh Status';
+            refreshBtn.disabled = false;
+        }, 2000);
+        
+    } catch (error) {
+        console.error('❌ Error refreshing status:', error);
+        
+        // Use textContent for error message to prevent XSS
+        statusDiv.innerHTML = '';
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message';
+        errorDiv.innerHTML = '<strong>❌ Error loading status:</strong><br>';
+        const errorText = document.createElement('span');
+        errorText.textContent = error.message;
+        errorDiv.appendChild(errorText);
+        statusDiv.appendChild(errorDiv);
+        
+        refreshBtn.innerHTML = '❌ Error';
+        setTimeout(() => {
+            refreshBtn.innerHTML = '🔄 Refresh Status';
+            refreshBtn.disabled = false;
+        }, 3000);
+    } finally {
+        isRefreshing = false;
+        updateTimestamp();
+    }
+}
+
+function updateDashboard(status) {
+    const isHealthy = status.isHealthy;
+    const stats = status.stats || {};
+    const database = status.database || {};
+    const ovation = status.ovation || {};
+    
+    // Update main status display using DOM manipulation for safety
+    const statusDiv = document.getElementById('status');
+    statusDiv.innerHTML = ''; // Clear existing content
+    
+    // Status indicator
+    const statusClass = isHealthy ? 'healthy' : (stats.errors > stats.successfulRuns ? 'error' : 'warning');
+    const statusText = isHealthy ? '✅ Service Healthy' : 
+                      (stats.errors > stats.successfulRuns ? '❌ Service Error' : '⚠️ Service Warning');
+    
+    const mainStatus = document.createElement('div');
+    mainStatus.style.fontSize = '1.2rem';
+    mainStatus.style.marginBottom = '15px';
+    mainStatus.innerHTML = `<span class="status-indicator ${statusClass}"></span><strong>${statusText}</strong>`;
+    statusDiv.appendChild(mainStatus);
+    
+    // Create grid container
+    const gridContainer = document.createElement('div');
+    gridContainer.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 0.9rem;';
+    
+    // Add grid items safely
+    const gridItems = [
+        { label: 'Last Run', value: stats.lastRun ? new Date(stats.lastRun).toLocaleString() : 'Never' },
+        { label: 'Last Success', value: stats.lastSuccess ? new Date(stats.lastSuccess).toLocaleString() : 'None' },
+        { label: 'Token Valid', value: ovation.hasValidToken ? '✅ Yes' : '❌ No' },
+        { label: 'Token Expires', value: ovation.tokenExpiry ? new Date(ovation.tokenExpiry).toLocaleString() : 'N/A' },
+        { label: 'Uptime', value: `${Math.round((status.uptime || 0) / 60)} minutes` },
+        { label: 'Success Rate', value: `${Math.round(((stats.successfulRuns || 0) / Math.max(stats.totalRuns || 1, 1)) * 100)}%` }
+    ];
+    
+    gridItems.forEach(item => {
+        const div = document.createElement('div');
+        const strong = document.createElement('strong');
+        strong.textContent = `${item.label}: `;
+        div.appendChild(strong);
+        div.appendChild(document.createTextNode(item.value));
+        gridContainer.appendChild(div);
+    });
+    
+    statusDiv.appendChild(gridContainer);
+    
+    // Update statistics safely
+    const statElements = {
+        'totalRuns': stats.totalRuns || 0,
+        'successfulRuns': stats.successfulRuns || 0,
+        'surveysProcessed': stats.surveysProcessed || 0,
+        'newSurveysAdded': stats.newSurveysAdded || 0,
+        'totalSurveys': (database.totalSurveys || 0).toLocaleString()
+    };
+    
+    Object.entries(statElements).forEach(([id, value]) => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = value;
+        }
+    });
+}
+
+async function triggerSync() {
+    if (isSyncing || isRefreshing) {
+        console.log('⏳ Another operation in progress, skipping sync...');
+        showNotification('Another operation is in progress. Please wait...', 'warning');
+        return;
+    }
+    
+    isSyncing = true;
+    const syncBtn = document.getElementById('syncBtn');
+    syncBtn.disabled = true;
+    syncBtn.innerHTML = '<div class="loading"></div> Syncing...';
+    
+    try {
+        console.log('🚀 Triggering manual sync...');
+        
+        const response = await fetchWithTimeout('/sync', { 
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        }, 30000); // 30 second timeout for sync
+        
+        const data = await response.json();
+        console.log('📦 Sync response:', data);
+        
+        if (data.success) {
+            syncBtn.innerHTML = '✅ Sync Complete!';
             
-            // Initialize on page load
-            document.addEventListener('DOMContentLoaded', function() {
-                console.log('🍞 Dashboard loaded, fetching status...');
-                refreshStatus();
-                
-                // Auto-refresh every 30 seconds
-                setInterval(refreshStatus, 30000);
-            });
+            // Use non-blocking notification instead of alert
+            const message = `✅ Sync completed successfully!\n\nFetched: ${data.data?.totalFetched || 0} surveys\nNew: ${data.data?.newSurveys || 0} surveys`;
+            showNotification(message, 'success');
             
-            async function refreshStatus() {
-                if (isRefreshing) {
-                    console.log('⏳ Already refreshing, skipping...');
-                    return;
+            // Refresh status after successful sync
+            setTimeout(() => {
+                if (!isRefreshing) {
+                    refreshStatus();
                 }
-                
-                isRefreshing = true;
-                const refreshBtn = document.getElementById('refreshBtn');
-                const statusDiv = document.getElementById('status');
-                
-                try {
-                    // Update button state
-                    refreshBtn.disabled = true;
-                    refreshBtn.innerHTML = '<div class="loading"></div> Refreshing...';
-                    
-                    console.log('📊 Fetching status from /status endpoint...');
-                    
-                    const response = await fetch('/status');
-                    console.log('📞 Response status:', response.status);
-                    
-                    if (!response.ok) {
-                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
-                    }
-                    
-                    const data = await response.json();
-                    console.log('📦 Received data:', data);
-                    
-                    if (data.success && data.data) {
-                        updateDashboard(data.data);
-                        console.log('✅ Dashboard updated successfully');
-                    } else {
-                        throw new Error(data.error || 'Invalid response format');
-                    }
-                    
-                    // Success feedback
-                    refreshBtn.innerHTML = '✅ Updated!';
-                    setTimeout(() => {
-                        refreshBtn.innerHTML = '🔄 Refresh Status';
-                        refreshBtn.disabled = false;
-                    }, 2000);
-                    
-                } catch (error) {
-                    console.error('❌ Error refreshing status:', error);
-                    
-                    statusDiv.innerHTML = '<div class="error-message"><strong>❌ Error loading status:</strong><br>' + error.message + '</div>';
-                    
-                    refreshBtn.innerHTML = '❌ Error';
-                    setTimeout(() => {
-                        refreshBtn.innerHTML = '🔄 Refresh Status';
-                        refreshBtn.disabled = false;
-                    }, 3000);
-                } finally {
-                    isRefreshing = false;
-                    updateTimestamp();
-                }
+            }, 1000);
+        } else {
+            throw new Error(data.error || 'Sync failed');
+        }
+        
+    } catch (error) {
+        console.error('❌ Sync error:', error);
+        syncBtn.innerHTML = '❌ Sync Failed';
+        showNotification(`❌ Sync failed: ${error.message}`, 'error');
+    } finally {
+        setTimeout(() => {
+            syncBtn.innerHTML = '🚀 Trigger Sync';
+            syncBtn.disabled = false;
+            isSyncing = false;
+        }, 3000);
+    }
+}
+
+function updateTimestamp() {
+    const element = document.getElementById('lastUpdated');
+    if (element) {
+        element.textContent = new Date().toLocaleString();
+    }
+}
+
+// Non-blocking notification system
+function showNotification(message, type = 'info') {
+    // Remove any existing notifications
+    const existingNotification = document.querySelector('.notification');
+    if (existingNotification) {
+        existingNotification.remove();
+    }
+    
+    // Create new notification
+    const notification = document.createElement('div');
+    notification.className = `notification notification-${type}`;
+    notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 20px;
+        background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#ff9800'};
+        color: white;
+        border-radius: 4px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        z-index: 1000;
+        max-width: 300px;
+        white-space: pre-line;
+        animation: slideIn 0.3s ease-out;
+    `;
+    notification.textContent = message;
+    
+    // Add CSS animation if not already present
+    if (!document.querySelector('#notification-styles')) {
+        const style = document.createElement('style');
+        style.id = 'notification-styles';
+        style.textContent = `
+            @keyframes slideIn {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
             }
-            
-            function updateDashboard(status) {
-                const isHealthy = status.isHealthy;
-                const stats = status.stats || {};
-                const database = status.database || {};
-                const ovation = status.ovation || {};
-                
-                // Update main status display
-                const statusClass = isHealthy ? 'healthy' : (stats.errors > stats.successfulRuns ? 'error' : 'warning');
-                const statusText = isHealthy ? '✅ Service Healthy' : 
-                                  (stats.errors > stats.successfulRuns ? '❌ Service Error' : '⚠️ Service Warning');
-                
-                document.getElementById('status').innerHTML = 
-                    '<div style="font-size: 1.2rem; margin-bottom: 15px;">' +
-                        '<span class="status-indicator ' + statusClass + '"></span>' +
-                        '<strong>' + statusText + '</strong>' +
-                    '</div>' +
-                    '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 0.9rem;">' +
-                        '<div><strong>Last Run:</strong> ' + (stats.lastRun ? new Date(stats.lastRun).toLocaleString() : 'Never') + '</div>' +
-                        '<div><strong>Last Success:</strong> ' + (stats.lastSuccess ? new Date(stats.lastSuccess).toLocaleString() : 'None') + '</div>' +
-                        '<div><strong>Token Valid:</strong> ' + (ovation.hasValidToken ? '✅ Yes' : '❌ No') + '</div>' +
-                        '<div><strong>Token Expires:</strong> ' + (ovation.tokenExpiry ? new Date(ovation.tokenExpiry).toLocaleString() : 'N/A') + '</div>' +
-                        '<div><strong>Uptime:</strong> ' + Math.round((status.uptime || 0) / 60) + ' minutes</div>' +
-                        '<div><strong>Success Rate:</strong> ' + Math.round(((stats.successfulRuns || 0) / Math.max(stats.totalRuns || 1, 1)) * 100) + '%</div>' +
-                    '</div>';
-                
-                // Update statistics
-                document.getElementById('totalRuns').textContent = stats.totalRuns || 0;
-                document.getElementById('successfulRuns').textContent = stats.successfulRuns || 0;
-                document.getElementById('surveysProcessed').textContent = stats.surveysProcessed || 0;
-                document.getElementById('newSurveysAdded').textContent = stats.newSurveysAdded || 0;
-                document.getElementById('totalSurveys').textContent = (database.totalSurveys || 0).toLocaleString();
+            @keyframes slideOut {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(100%); opacity: 0; }
             }
-            
-            async function triggerSync() {
-                const syncBtn = document.getElementById('syncBtn');
-                syncBtn.disabled = true;
-                syncBtn.innerHTML = '<div class="loading"></div> Syncing...';
-                
-                try {
-                    console.log('🚀 Triggering manual sync...');
-                    
-                    const response = await fetch('/sync', { 
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        }
-                    });
-                    
-                    const data = await response.json();
-                    console.log('📦 Sync response:', data);
-                    
-                    if (data.success) {
-                        syncBtn.innerHTML = '✅ Sync Complete!';
-                        alert('✅ Sync completed successfully!\\n\\nFetched: ' + (data.data?.totalFetched || 0) + ' surveys\\nNew: ' + (data.data?.newSurveys || 0) + ' surveys');
-                        
-                        // Refresh status after successful sync
-                        setTimeout(() => {
-                            refreshStatus();
-                        }, 1000);
-                    } else {
-                        throw new Error(data.error || 'Sync failed');
-                    }
-                    
-                } catch (error) {
-                    console.error('❌ Sync error:', error);
-                    syncBtn.innerHTML = '❌ Sync Failed';
-                    alert('❌ Sync failed: ' + error.message);
-                } finally {
-                    setTimeout(() => {
-                        syncBtn.innerHTML = '🚀 Trigger Sync';
-                        syncBtn.disabled = false;
-                    }, 3000);
-                }
-            }
-            
-            function updateTimestamp() {
-                document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
-            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => notification.remove(), 300);
+    }, 5000);
+}
         </script>
     </body>
     </html>
