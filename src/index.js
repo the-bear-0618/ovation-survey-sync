@@ -34,12 +34,15 @@ const syncService = new OvationSyncService({
 });
 
 // Dashboard route - Main page
+// Fixed Dashboard Route for src/index.js
+// Replace the app.get('/', ...) route with this corrected version
+
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
     <html>
     <head>
-        <title>🍞 Ovation Survey Sync Status</title>
+        <title>🍞 Ovation Survey Sync</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
@@ -104,6 +107,7 @@ app.get('/', (req, res) => {
                 background: #f8f9fa;
                 padding: 20px;
                 border-radius: 10px;
+                min-height: 120px;
             }
             .stats-grid {
                 display: grid;
@@ -141,9 +145,9 @@ app.get('/', (req, res) => {
                 display: inline-block;
                 width: 20px;
                 height: 20px;
-                border: 3px solid rgba(255,255,255,.3);
+                border: 3px solid #ccc;
                 border-radius: 50%;
-                border-top-color: #fff;
+                border-top-color: #667eea;
                 animation: spin 1s ease-in-out infinite;
                 margin-right: 10px;
             }
@@ -154,6 +158,14 @@ app.get('/', (req, res) => {
                 color: rgba(255,255,255,0.8);
                 font-size: 0.9rem;
                 margin-bottom: 20px;
+            }
+            .error-message {
+                background: #ffe6e6;
+                color: #c0392b;
+                padding: 15px;
+                border-radius: 10px;
+                margin: 15px 0;
+                border-left: 4px solid #e74c3c;
             }
         </style>
     </head>
@@ -205,95 +217,114 @@ app.get('/', (req, res) => {
             
             <div class="status-card">
                 <h3>🔗 Quick Links</h3>
-                <a href="/health" class="btn">💚 Health Check</a>
-                <a href="/status" class="btn">📊 Detailed Status</a>
-                <a href="/sync-history" class="btn">📋 Sync History</a>
-            </div>
-            
-            <div class="status-card">
-                <h3>📈 Great Harvest Crown Point Dashboards</h3>
+                <a href="/health" class="btn" target="_blank">💚 Health Check</a>
+                <a href="/status" class="btn" target="_blank">📊 Raw Status Data</a>
                 <a href="https://ovation-monitor-simple-production.up.railway.app" target="_blank" class="btn">
                     📈 Main Analytics Dashboard
                 </a>
-                <p style="margin-top: 15px; color: #666; font-size: 0.9rem;">
-                    View comprehensive analytics, survey trends, and customer feedback insights
-                </p>
             </div>
         </div>
 
         <script>
             let isRefreshing = false;
             
+            // Initialize on page load
+            document.addEventListener('DOMContentLoaded', function() {
+                console.log('🍞 Dashboard loaded, fetching status...');
+                refreshStatus();
+                
+                // Auto-refresh every 30 seconds
+                setInterval(refreshStatus, 30000);
+            });
+            
             async function refreshStatus() {
-                if (isRefreshing) return;
+                if (isRefreshing) {
+                    console.log('⏳ Already refreshing, skipping...');
+                    return;
+                }
                 
                 isRefreshing = true;
                 const refreshBtn = document.getElementById('refreshBtn');
-                refreshBtn.disabled = true;
-                refreshBtn.innerHTML = '<div class="loading"></div> Refreshing...';
+                const statusDiv = document.getElementById('status');
                 
                 try {
-                    const response = await fetch('/status');
-                    const data = await response.json();
+                    // Update button state
+                    refreshBtn.disabled = true;
+                    refreshBtn.innerHTML = '<div class="loading"></div> Refreshing...';
                     
-                    if (data.success) {
-                        const status = data.data;
-                        const isHealthy = status.isHealthy;
-                        const stats = status.stats;
-                        const database = status.database;
-                        
-                        // Update main status
-                        const statusClass = isHealthy ? 'healthy' : (stats.errors > stats.successfulRuns ? 'error' : 'warning');
-                        const statusText = isHealthy ? '✅ Service Healthy' : 
-                                          (stats.errors > stats.successfulRuns ? '❌ Service Error' : '⚠️ Service Warning');
-                        
-                        document.getElementById('status').innerHTML = \`
-                            <div style="font-size: 1.2rem; margin-bottom: 15px;">
-                                <span class="status-indicator \${statusClass}"></span>
-                                <strong>\${statusText}</strong>
-                            </div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                                <div><strong>Last Run:</strong> \${stats.lastRun ? new Date(stats.lastRun).toLocaleString() : 'Never'}</div>
-                                <div><strong>Last Success:</strong> \${stats.lastSuccess ? new Date(stats.lastSuccess).toLocaleString() : 'None'}</div>
-                                <div><strong>Token Valid:</strong> \${status.ovation?.hasValidToken ? '✅ Yes' : '❌ No'}</div>
-                                <div><strong>Token Expires:</strong> \${status.ovation?.tokenExpiry ? new Date(status.ovation.tokenExpiry).toLocaleString() : 'N/A'}</div>
-                            </div>
-                        \`;
-                        
-                        // Update statistics
-                        document.getElementById('totalRuns').textContent = stats.totalRuns || 0;
-                        document.getElementById('successfulRuns').textContent = stats.successfulRuns || 0;
-                        document.getElementById('surveysProcessed').textContent = stats.surveysProcessed || 0;
-                        document.getElementById('newSurveysAdded').textContent = stats.newSurveysAdded || 0;
-                        document.getElementById('totalSurveys').textContent = (database?.totalSurveys || 0).toLocaleString();
-                        
-                        refreshBtn.innerHTML = '✅ Updated!';
-                        setTimeout(() => {
-                            refreshBtn.innerHTML = '🔄 Refresh Status';
-                            refreshBtn.disabled = false;
-                        }, 2000);
-                        
-                    } else {
-                        throw new Error(data.error || 'Unknown error');
+                    console.log('📊 Fetching status from /status endpoint...');
+                    
+                    const response = await fetch('/status');
+                    console.log('📞 Response status:', response.status);
+                    
+                    if (!response.ok) {
+                        throw new Error('HTTP ' + response.status + ': ' + response.statusText);
                     }
-                } catch (error) {
-                    document.getElementById('status').innerHTML = \`
-                        <div style="color: #e74c3c;">
-                            <span class="status-indicator error"></span>
-                            <strong>❌ Error loading status</strong><br>
-                            <small>\${error.message}</small>
-                        </div>
-                    \`;
-                    refreshBtn.innerHTML = '❌ Error';
+                    
+                    const data = await response.json();
+                    console.log('📦 Received data:', data);
+                    
+                    if (data.success && data.data) {
+                        updateDashboard(data.data);
+                        console.log('✅ Dashboard updated successfully');
+                    } else {
+                        throw new Error(data.error || 'Invalid response format');
+                    }
+                    
+                    // Success feedback
+                    refreshBtn.innerHTML = '✅ Updated!';
                     setTimeout(() => {
                         refreshBtn.innerHTML = '🔄 Refresh Status';
                         refreshBtn.disabled = false;
                     }, 2000);
+                    
+                } catch (error) {
+                    console.error('❌ Error refreshing status:', error);
+                    
+                    statusDiv.innerHTML = '<div class="error-message"><strong>❌ Error loading status:</strong><br>' + error.message + '</div>';
+                    
+                    refreshBtn.innerHTML = '❌ Error';
+                    setTimeout(() => {
+                        refreshBtn.innerHTML = '🔄 Refresh Status';
+                        refreshBtn.disabled = false;
+                    }, 3000);
                 } finally {
                     isRefreshing = false;
+                    updateTimestamp();
                 }
+            }
+            
+            function updateDashboard(status) {
+                const isHealthy = status.isHealthy;
+                const stats = status.stats || {};
+                const database = status.database || {};
+                const ovation = status.ovation || {};
                 
-                updateTimestamp();
+                // Update main status display
+                const statusClass = isHealthy ? 'healthy' : (stats.errors > stats.successfulRuns ? 'error' : 'warning');
+                const statusText = isHealthy ? '✅ Service Healthy' : 
+                                  (stats.errors > stats.successfulRuns ? '❌ Service Error' : '⚠️ Service Warning');
+                
+                document.getElementById('status').innerHTML = 
+                    '<div style="font-size: 1.2rem; margin-bottom: 15px;">' +
+                        '<span class="status-indicator ' + statusClass + '"></span>' +
+                        '<strong>' + statusText + '</strong>' +
+                    '</div>' +
+                    '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 0.9rem;">' +
+                        '<div><strong>Last Run:</strong> ' + (stats.lastRun ? new Date(stats.lastRun).toLocaleString() : 'Never') + '</div>' +
+                        '<div><strong>Last Success:</strong> ' + (stats.lastSuccess ? new Date(stats.lastSuccess).toLocaleString() : 'None') + '</div>' +
+                        '<div><strong>Token Valid:</strong> ' + (ovation.hasValidToken ? '✅ Yes' : '❌ No') + '</div>' +
+                        '<div><strong>Token Expires:</strong> ' + (ovation.tokenExpiry ? new Date(ovation.tokenExpiry).toLocaleString() : 'N/A') + '</div>' +
+                        '<div><strong>Uptime:</strong> ' + Math.round((status.uptime || 0) / 60) + ' minutes</div>' +
+                        '<div><strong>Success Rate:</strong> ' + Math.round(((stats.successfulRuns || 0) / Math.max(stats.totalRuns || 1, 1)) * 100) + '%</div>' +
+                    '</div>';
+                
+                // Update statistics
+                document.getElementById('totalRuns').textContent = stats.totalRuns || 0;
+                document.getElementById('successfulRuns').textContent = stats.successfulRuns || 0;
+                document.getElementById('surveysProcessed').textContent = stats.surveysProcessed || 0;
+                document.getElementById('newSurveysAdded').textContent = stats.newSurveysAdded || 0;
+                document.getElementById('totalSurveys').textContent = (database.totalSurveys || 0).toLocaleString();
             }
             
             async function triggerSync() {
@@ -302,11 +333,22 @@ app.get('/', (req, res) => {
                 syncBtn.innerHTML = '<div class="loading"></div> Syncing...';
                 
                 try {
-                    const response = await fetch('/sync', { method: 'POST' });
+                    console.log('🚀 Triggering manual sync...');
+                    
+                    const response = await fetch('/sync', { 
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
                     const data = await response.json();
+                    console.log('📦 Sync response:', data);
                     
                     if (data.success) {
                         syncBtn.innerHTML = '✅ Sync Complete!';
+                        alert('✅ Sync completed successfully!\\n\\nFetched: ' + (data.data?.totalFetched || 0) + ' surveys\\nNew: ' + (data.data?.newSurveys || 0) + ' surveys');
+                        
                         // Refresh status after successful sync
                         setTimeout(() => {
                             refreshStatus();
@@ -315,14 +357,11 @@ app.get('/', (req, res) => {
                         throw new Error(data.error || 'Sync failed');
                     }
                     
-                    setTimeout(() => {
-                        syncBtn.innerHTML = '🚀 Trigger Sync';
-                        syncBtn.disabled = false;
-                    }, 3000);
-                    
                 } catch (error) {
+                    console.error('❌ Sync error:', error);
                     syncBtn.innerHTML = '❌ Sync Failed';
                     alert('❌ Sync failed: ' + error.message);
+                } finally {
                     setTimeout(() => {
                         syncBtn.innerHTML = '🚀 Trigger Sync';
                         syncBtn.disabled = false;
@@ -333,12 +372,6 @@ app.get('/', (req, res) => {
             function updateTimestamp() {
                 document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
             }
-            
-            // Load status on page load
-            refreshStatus();
-            
-            // Auto-refresh every 30 seconds
-            setInterval(refreshStatus, 30000);
         </script>
     </body>
     </html>
